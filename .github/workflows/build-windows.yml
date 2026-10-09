@@ -6,9 +6,10 @@ name: build-windows
 #   che e' esattamente cio' che consuma l'updater (vedi docs/UPDATER.MD).
 on:
   push:
-    branches: [main]
+    # Nessuna build automatica sui branch: la build parte solo
+    # spingendo un tag v* (crea anche la Release) oppure
+    # manualmente da Actions -> build-windows -> Run workflow.
     tags: ['v*']
-  pull_request:
   workflow_dispatch:
 
 permissions:
