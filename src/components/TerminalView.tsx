@@ -6,9 +6,18 @@ import { api, onPtyExit, onPtyOutput } from "../lib/tauri";
 import type { Workspace } from "../lib/tauri";
 import { createBusyTracker, sanitizeTerminalTitle } from "../lib/terminal";
 import { TERMINAL_THEME } from "../lib/terminalTheme";
+import {
+  DEFAULT_COMMAND_AFTER_OUTPUT_MS,
+  DEFAULT_COMMAND_FALLBACK_MS,
+  buildDefaultCommandInput,
+  sanitizeDefaultCommand,
+  shouldInjectDefaultCommand,
+} from "../lib/settings";
 
 interface Props {
   workspace: Workspace;
+  /** Comando di default da eseguire all'apertura ("" = nessuno). */
+  initialCommand: string;
   active: boolean;
   onExit: () => void;
   onTitle?: (title: string) => void;
@@ -17,6 +26,7 @@ interface Props {
 
 export default function TerminalView({
   workspace,
+  initialCommand,
   active,
   onExit,
   onTitle,
@@ -34,6 +44,9 @@ export default function TerminalView({
   const sessionRef = useRef(0);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  // Catturato al mount: modifiche successive alle impostazioni valgono
+  // solo per i terminali aperti dopo.
+  const pendingCommandRef = useRef(initialCommand);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -60,6 +73,25 @@ export default function TerminalView({
       idleMs: 2000,
       onChange: (busy) => onStatusRef.current?.(busy),
     });
+
+    // Iniezione del comando di default: al primo output della shell
+    // (prompt pronto) + breve attesa, con fallback temporizzato per gli
+    // avvii freddi che tardano a stampare. Una sola iniezione per tab.
+    let injectTimer: ReturnType<typeof setTimeout> | undefined;
+    let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
+    let injected = false;
+    const wantedCommand = sanitizeDefaultCommand(pendingCommandRef.current);
+
+    const injectDefaultCommand = () => {
+      if (injected || disposed) return;
+      const s = sessionRef.current;
+      if (s === 0 || !shouldInjectDefaultCommand(wantedCommand)) return;
+      injected = true;
+      void api
+        .ptyWrite(s, buildDefaultCommandInput(wantedCommand))
+        .catch(() => undefined);
+      status.markEnter();
+    };
 
     const titleDisp = term.onTitleChange((t) => {
       const next = sanitizeTerminalTitle(t);
@@ -100,6 +132,16 @@ export default function TerminalView({
           if (e.session_id === sessionRef.current) {
             term.write(e.data);
             status.markOutput();
+            if (
+              !injected &&
+              injectTimer === undefined &&
+              shouldInjectDefaultCommand(wantedCommand)
+            ) {
+              injectTimer = setTimeout(
+                injectDefaultCommand,
+                DEFAULT_COMMAND_AFTER_OUTPUT_MS,
+              );
+            }
           }
         });
         unlistenExit = await onPtyExit((e) => {
@@ -114,6 +156,12 @@ export default function TerminalView({
           return;
         }
         sessionRef.current = id;
+        if (shouldInjectDefaultCommand(wantedCommand)) {
+          fallbackTimer = setTimeout(
+            injectDefaultCommand,
+            DEFAULT_COMMAND_FALLBACK_MS,
+          );
+        }
         // Recupera eventuali resize avvenuti prima dello spawn (il
         // ResizeObserver li ignora finché la sessione è 0): riadatta xterm
         // al contenitore reale e risincronizza il PTY.
@@ -150,6 +198,8 @@ export default function TerminalView({
       ro.disconnect();
       unlistenOut?.();
       unlistenExit?.();
+      if (injectTimer !== undefined) clearTimeout(injectTimer);
+      if (fallbackTimer !== undefined) clearTimeout(fallbackTimer);
       titleDisp.dispose();
       status.dispose();
       const s = sessionRef.current;

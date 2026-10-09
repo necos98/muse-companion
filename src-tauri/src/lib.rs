@@ -1,9 +1,11 @@
 mod pty;
+mod settings;
 pub mod updater;
 mod workspaces;
 mod wsl;
 
 use pty::PtyState;
+use settings::SettingsStore;
 use workspaces::WorkspaceStore;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -13,8 +15,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(WorkspaceStore::default())
         .manage(PtyState::default())
+        .manage(SettingsStore::default())
         .setup(|app| {
             workspaces::load_from_disk(app);
+            settings::load_from_disk(app);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -24,6 +28,8 @@ pub fn run() {
             workspaces::remove_workspace,
             wsl::list_wsl_distros,
             wsl::check_wsl_path,
+            settings::get_settings,
+            settings::set_default_command,
             pty::pty_spawn,
             pty::pty_write,
             pty::pty_resize,

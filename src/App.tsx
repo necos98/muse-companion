@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { Loader2, X } from "lucide-react";
+import { Loader2, Settings, X } from "lucide-react";
 import Sidebar from "./components/Sidebar";
 import AddWorkspaceDialog from "./components/AddWorkspaceDialog";
+import SettingsDialog from "./components/SettingsDialog";
 import TerminalView from "./components/TerminalView";
 import UpdateCheck from "./components/UpdateCheck";
+import { Button } from "./components/ui/button";
 import { api } from "./lib/tauri";
 import type { Workspace } from "./lib/tauri";
 import { cn } from "./lib/utils";
@@ -27,6 +29,8 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [defaultCommand, setDefaultCommand] = useState("");
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [busyByKey, setBusyByKey] = useState<Record<string, boolean>>({});
@@ -42,6 +46,10 @@ export default function App() {
         setLoadError(String(e));
         setLoading(false);
       });
+    api
+      .getSettings()
+      .then((s) => setDefaultCommand(s.default_command))
+      .catch(() => undefined);
   }, []);
 
   // Se il tab attivo viene chiuso, passa all'ultimo rimasto.
@@ -113,7 +121,16 @@ export default function App() {
             onAdd={() => setDialogOpen(true)}
           />
         )}
-        <div className="border-t p-3">
+        <div className="flex flex-col gap-2 border-t p-3">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => setSettingsOpen(true)}
+            className="w-full justify-start"
+          >
+            <Settings className="h-3.5 w-3.5" />
+            Impostazioni
+          </Button>
           <UpdateCheck />
         </div>
       </aside>
@@ -187,6 +204,7 @@ export default function App() {
             <TerminalView
               key={t.key}
               workspace={t.workspace}
+              initialCommand={defaultCommand}
               active={t.key === activeKey}
               onExit={() => closeTab(t.key)}
               onTitle={(title) => handleTitle(t.key, title)}
@@ -200,6 +218,12 @@ export default function App() {
         isOpen={dialogOpen}
         onClose={() => setDialogOpen(false)}
         onAdded={handleAdded}
+      />
+      <SettingsDialog
+        isOpen={settingsOpen}
+        initialCommand={defaultCommand}
+        onClose={() => setSettingsOpen(false)}
+        onSaved={(cmd) => setDefaultCommand(cmd)}
       />
     </div>
   );

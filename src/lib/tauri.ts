@@ -34,6 +34,10 @@ export interface NewWorkspace {
   shell?: string;
 }
 
+export interface Settings {
+  default_command: string;
+}
+
 export const api = {
   listWorkspaces: () => invoke<Workspace[]>("list_workspaces"),
 
@@ -55,6 +59,11 @@ export const api = {
 
   checkWslPath: (distro: string, path: string) =>
     invoke<boolean>("check_wsl_path", { distro, path }),
+
+  getSettings: () => invoke<Settings>("get_settings"),
+
+  setDefaultCommand: (command: string) =>
+    invoke<Settings>("set_default_command", { command }),
 
   // Nota: Tauri v2 converte i nomi degli argomenti in camelCase
   // (workspace_id -> workspaceId): le chiavi qui devono esserlo già.

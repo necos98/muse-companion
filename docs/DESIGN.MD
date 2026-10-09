@@ -85,6 +85,15 @@ ed eventi Tauri (`emit`/`listen`) per lo stream di output dei terminali.
   `pty_close` uccide il processo figlio; il thread di lettura emette comunque
   `pty-exit`, così frontend e backend non divergono.
 
+### `settings.rs` — impostazioni globali
+
+- `Settings { default_command }`: comando eseguito automaticamente a ogni
+  nuovo terminale (stringa vuota = nessuno).
+- Stesso pattern di `workspaces.rs`: `SettingsStore` in memoria,
+  file `<app_data>/settings.json`, backup `.json.bak` se corrotto.
+- Comandi: `get_settings`, `set_default_command` (sanitizza: trim, max
+  1000 caratteri, come il frontend in `src/lib/settings.ts`).
+
 ### `lib.rs`
 
 Registra i plugin (`opener`, `dialog`), gli stati condivisi, il caricamento
@@ -103,7 +112,14 @@ dello store in `setup` e tutti i comandi. Capability minime in
 - `components/AddWorkspaceDialog.tsx`: modal gluestack con toggle Windows/WSL.
   Windows: picker cartella nativo (`@tauri-apps/plugin-dialog`) o path manuale.
   WSL: lista distro con caricamento async, input percorso con bottone "Verifica".
+- `components/SettingsDialog.tsx`: modale impostazioni con anteprima di
+  sicurezza (mostra cosa verrà eseguito, o che i terminali si apriranno vuoti).
+- `lib/settings.ts`: pure functions zero-dep (sanitizza, trigger, input pty
+  con `\r`, costanti di timing), coperte da `tests/settings.test.mjs`.
 - `components/TerminalView.tsx`: un'istanza xterm per tab.
+  Il comando di default (catturato al mount) viene iniettato via `pty_write`
+  al primo output della shell + 150 ms, con fallback a 2,5 s per gli avvii
+  freddi; una sola iniezione per tab, timer puliti all'unmount.
   - Tema Campbell in `src/lib/terminalTheme.ts` (stessi 16 ANSI di Windows
     Terminal); l'host di xterm è un div interno senza padding (FitAddon
     misura il contenitore: il padding esterno sposterebbe l'ultima riga
