@@ -1,6 +1,6 @@
 {
   "_comment": "Config updater GitHub Releases: SINGLE SOURCE OF TRUTH per owner/repo. Letto dal backend Rust a compile-time (src-tauri/src/updater.rs via include_str!) ed esposto al frontend tramite comando get_update_config. Se il repository GitHub NON esiste ancora, lascia owner=REPLACE_ME_OWNER: l'updater lo rileva e risponde con un messaggio chiaro invece di fallire (vedi docs/UPDATER.MD). Override runtime (hanno precedenza): MUSE_COMPANION_UPDATE_OWNER, MUSE_COMPANION_UPDATE_REPO, MUSE_COMPANION_UPDATE_API_URL.",
-  "owner": "REPLACE_ME_OWNER",
+  "owner": "necos98",
   "repo": "muse-companion",
   "apiUrl": "https://api.github.com",
   "assetPatterns": [".msi", "setup.exe", "win-x64.exe", "windows-x86_64.exe", ".exe"],
