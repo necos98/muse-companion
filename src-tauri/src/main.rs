@@ -8,6 +8,8 @@ fn print_help() {
            muse-companion                 Avvia l'interfaccia grafica\n  \
            muse-companion --check-update  Controlla le release su GitHub ed esce\n  \
            muse-companion --check-update --json  Come sopra, output JSON\n  \
+           muse-companion --notify <evento> [sorgente]  Segnala fine lavoro\n  \
+             all'istanza in esecuzione ed esce (eventi: stop, session-end, test)\n  \
            muse-companion --version       Stampa la versione ed esce\n  \
            muse-companion --help          Questo aiuto\n\
          \n\
@@ -15,8 +17,9 @@ fn print_help() {
          1 = errore (repo non configurato, rete, ...).\n\
          \n\
          Nota Windows: le build release non hanno console (windows_subsystem), quindi\n  \
-         questi flag sono pensati per le build debug (cargo run -- --check-update)\n  \
-         o per script; nella GUI usa il pannello \"Controlla aggiornamenti\".",
+         --check-update/--version sono pensati per le build debug o per script;\n  \
+         --notify invece non stampa nulla e funziona anche in release: e' il\n  \
+         comando usato dagli hook del plugin Muse.",
         muse_companion_lib::updater::current_version()
     );
 }
@@ -30,6 +33,17 @@ fn main() {
     if args.iter().any(|a| a == "--version" || a == "-V") {
         println!("muse-companion {}", muse_companion_lib::updater::current_version());
         return;
+    }
+    if let Some(pos) = args.iter().position(|a| a == "--notify") {
+        let event = args.get(pos + 1).cloned().unwrap_or_default();
+        let source = args.get(pos + 2).cloned().unwrap_or("local".to_string());
+        match muse_companion_lib::muse_notify::send_notify(&event, &source) {
+            Ok(()) => std::process::exit(0),
+            Err(e) => {
+                eprintln!("notify fallita: {e}");
+                std::process::exit(1);
+            }
+        }
     }
     if args.iter().any(|a| a == "--check-update") {
         let as_json = args.iter().any(|a| a == "--json");

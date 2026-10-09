@@ -26,6 +26,19 @@ export interface PtyExitEvent {
   session_id: number;
 }
 
+export interface MuseEnvStatus {
+  key: string;
+  label: string;
+  kind: "windows" | "wsl";
+  muse_found: boolean;
+  installed: boolean;
+}
+
+export interface MuseEvent {
+  event: string;
+  source: string;
+}
+
 export interface NewWorkspace {
   name: string;
   kind: "windows" | "wsl";
@@ -78,6 +91,16 @@ export const api = {
 
   ptyClose: (sessionId: number) => invoke<void>("pty_close", { sessionId }),
 
+  museEnvStatus: () => invoke<MuseEnvStatus[]>("muse_env_status"),
+
+  installMusePlugin: (envKey: string) =>
+    invoke<string>("install_muse_plugin", { envKey }),
+
+  removeMusePlugin: (envKey: string) =>
+    invoke<string>("remove_muse_plugin", { envKey }),
+
+  testMuseNotify: () => invoke<string>("test_muse_notify"),
+
   // Updater GitHub Releases (backend: src-tauri/src/updater.rs).
   getUpdateConfig: () => invoke<UpdateConfig>("get_update_config"),
 
@@ -96,4 +119,8 @@ export function onPtyOutput(cb: (e: PtyOutputEvent) => void) {
 
 export function onPtyExit(cb: (e: PtyExitEvent) => void) {
   return listen<PtyExitEvent>("pty-exit", (event) => cb(event.payload));
+}
+
+export function onMuseEvent(cb: (e: MuseEvent) => void) {
+  return listen<MuseEvent>("muse-event", (event) => cb(event.payload));
 }

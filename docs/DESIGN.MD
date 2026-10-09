@@ -94,6 +94,20 @@ ed eventi Tauri (`emit`/`listen`) per lo stream di output dei terminali.
 - Comandi: `get_settings`, `set_default_command` (sanitizza: trim, max
   1000 caratteri, come il frontend in `src/lib/settings.ts`).
 
+### `muse_notify.rs` — segnale di fine lavoro Muse (niente semaforo)
+
+- Il plugin Muse installato negli env dichiara hook `Stop`/`SessionEnd` il cui
+  comando e' questo stesso exe: `muse-companion --notify <evento> <sorgente>`
+  (ramo con early-return in `main.rs`, come `--check-update`).
+- `--notify` spedisce una riga JSON su TCP `127.0.0.1:17421` all'istanza GUI;
+  il listener (thread in `setup`) emette l'evento Tauri `muse-event` e il
+  frontend suona il ding (Web Audio, `src/lib/notifySound.ts`).
+- Da WSL l'exe gira sull'host via interop: il TCP resta locale, nessun
+  networking cross-VM. Il Manifest e' generato per-env con il path exe bakato
+  (`C:/...` su Windows, `/mnt/...` su WSL, mai backslash/BOM).
+- Comandi: `muse_env_status`, `install_muse_plugin`, `remove_muse_plugin`,
+  `test_muse_notify`. Tab "Muse" in `SettingsDialog` per installare negli env.
+
 ### `lib.rs`
 
 Registra i plugin (`opener`, `dialog`), gli stati condivisi, il caricamento

@@ -6,8 +6,9 @@ import SettingsDialog from "./components/SettingsDialog";
 import TerminalView from "./components/TerminalView";
 import UpdateCheck from "./components/UpdateCheck";
 import { Button } from "./components/ui/button";
-import { api } from "./lib/tauri";
+import { api, onMuseEvent } from "./lib/tauri";
 import type { Workspace } from "./lib/tauri";
+import { playDing } from "./lib/notifySound";
 import { cn } from "./lib/utils";
 
 interface Tab {
@@ -50,6 +51,17 @@ export default function App() {
       .getSettings()
       .then((s) => setDefaultCommand(s.default_command))
       .catch(() => undefined);
+  }, []);
+
+  // Ding di fine lavoro Muse (qualsiasi env/tab: il suono e' globale).
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    onMuseEvent(() => playDing())
+      .then((u) => {
+        unlisten = u;
+      })
+      .catch(() => undefined);
+    return () => unlisten?.();
   }, []);
 
   // Se il tab attivo viene chiuso, passa all'ultimo rimasto.
