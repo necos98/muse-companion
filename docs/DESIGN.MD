@@ -70,7 +70,11 @@ ed eventi Tauri (`emit`/`listen`) per lo stream di output dei terminali.
   (limite: 32 sessioni).
 - `pty_spawn(workspace_id, cols, rows)`:
   - Windows: `powershell.exe -NoLogo` (o shell custom) con cwd = cartella;
-  - WSL: `wsl.exe -d <distro> --cd <path> [-e <shell>]`, `TERM=xterm-256color`;
+  - WSL: `wsl.exe -d <distro> --cd <path> [-e <shell>]`;
+  - entrambi i rami impostano `TERM=xterm-256color` + `COLORTERM=truecolor`
+    (senza questi hint molti CLI disabilitano i colori perché l'app GUI
+    non ne eredita alcuno); niente `FORCE_COLOR`, per rispettare
+    `NO_COLOR`/`--no-color`;
   - ricontrolla che la cartella esista al momento dello spawn.
 - Un thread di lettura per sessione inoltra i chunk al frontend con l'evento
   `pty-output { session_id, data }`; alla chiusura emette `pty-exit { session_id }`.
@@ -100,6 +104,10 @@ dello store in `setup` e tutti i comandi. Capability minime in
   Windows: picker cartella nativo (`@tauri-apps/plugin-dialog`) o path manuale.
   WSL: lista distro con caricamento async, input percorso con bottone "Verifica".
 - `components/TerminalView.tsx`: un'istanza xterm per tab.
+  - Tema Campbell in `src/lib/terminalTheme.ts` (stessi 16 ANSI di Windows
+    Terminal); l'host di xterm è un div interno senza padding (FitAddon
+    misura il contenitore: il padding esterno sposterebbe l'ultima riga
+    fuori vista). Refit di recupero dopo lo spawn e a font pronti.
   - Lo spawn avviene al mount; i tab inattivi restano montati ma nascosti
     (`display: none`) per non perdere lo stato della shell.
   - `ResizeObserver` + evento "torna attivo" tengono sincronizzate dimensioni

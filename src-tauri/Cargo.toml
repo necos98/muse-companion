@@ -1,6 +1,6 @@
 [package]
 name = "muse-companion"
-version = "0.1.0"
+version = "0.1.1"
 description = "Workspace companion con terminali integrati Windows + WSL"
 authors = ["you"]
 edition = "2021"

@@ -111,20 +111,117 @@ mod tests {
   }
 
   #[test]
+  fn powershell_detection_matches_names_paths_and_case() {
+    for yes in [
+      "powershell",
+      "powershell.exe",
+      "pwsh",
+      "pwsh.exe",
+      "POWERSHELL.EXE",
+      "  pwsh  ",
+      r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+      r"C:\Program Files\PowerShell\7\pwsh.exe",
+    ] {
+      assert!(is_powershell(yes), "{yes}");
+    }
+    for no in ["", "cmd", "cmd.exe", "bash", "zsh", "nu", "powershell.exe.bak"] {
+      assert!(!is_powershell(no), "{no}");
+    }
+  }
+
+  #[test]
+  fn title_hook_emits_osc_and_chains_prompt() {
+    assert!(POWERSHELL_TITLE_HOOK.contains("function global:prompt"));
+    assert!(POWERSHELL_TITLE_HOOK.contains("[char]27)]0;"));
+    assert!(POWERSHELL_TITLE_HOOK.contains("RawUI.WindowTitle"));
+    assert!(POWERSHELL_TITLE_HOOK.contains("Get-Command prompt"));
+  }
+
+  /// Esercita il vero percorso di consegna dell'hook (argv di CreateProcess
+  /// -> powershell.exe) e ne verifica il comportamento end-to-end.
+  #[test]
+  #[cfg(windows)]
+  fn title_hook_roundtrip_through_powershell() {
+    fn run(prefix: &str, suffix: &str) -> String {
+      let cmd = format!("{prefix}{POWERSHELL_TITLE_HOOK}{suffix}");
+      let out = std::process::Command::new("powershell.exe")
+        .args(["-NoLogo", "-NoProfile", "-Command", &cmd])
+        .output()
+        .expect("powershell.exe non avviabile");
+      assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+      String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    // Default: OSC 0 con fallback + prompt ancora funzionante.
+    let out = run("", "; 1+1; prompt");
+    assert!(out.contains('2'), "comandi rotti? output: {out:?}");
+    assert!(out.contains("\u{1b}]0;"), "OSC 0 mancante: {out:?}");
+    assert!(out.contains('\u{7}'), "BEL mancante: {out:?}");
+
+    // Mirror: un titolo impostato via API Win32 (come fanno gli agenti)
+    // viene riemesso come OSC al prompt successivo.
+    let out = run("", "; $Host.UI.RawUI.WindowTitle = 'AGENTE-123'; prompt");
+    assert!(out.contains("]0;AGENTE-123\x07"), "mirror mancante: {out:?}");
+
+    // Chaining: un prompt definito dal profilo viene preservato.
+    let out = run("function prompt { 'CUSTOM> ' }; ", "; prompt");
+    assert!(out.contains("CUSTOM> "), "prompt profilo perso: {out:?}");
+    assert!(out.contains("\u{1b}]0;"), "OSC 0 mancante con profilo: {out:?}");
+  }
+
+  #[test]
   fn size_is_clamped() {
     let s = pty_size(0, 1000);
     assert_eq!((s.cols, s.rows), (2, 300));
     let s = pty_size(80, 24);
     assert_eq!((s.cols, s.rows), (80, 24));
   }
+
+  #[test]
+  fn color_env_declares_256_and_truecolor() {
+    let mut cmd = CommandBuilder::new("dummy");
+    apply_color_env(&mut cmd);
+    assert_eq!(
+      cmd.get_env("TERM"),
+      Some(std::ffi::OsStr::new("xterm-256color"))
+    );
+    assert_eq!(
+      cmd.get_env("COLORTERM"),
+      Some(std::ffi::OsStr::new("truecolor"))
+    );
+  }
+}
+
+/// Hint di capacità colore per i figli del PTY (CLI Node/chalk, Python,
+/// Rust termcolor...): senza TERM/COLORTERM molti tool disabilitano i colori
+/// perché l'environment ereditato dall'app GUI non ne dichiara il supporto.
+/// xterm.js gestisce 256 colori + truecolor, quindi li dichiariamo entrambi.
+/// Niente FORCE_COLOR: forzerebbe i colori anche contro NO_COLOR/--no-color.
+fn apply_color_env(cmd: &mut CommandBuilder) {
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
 }
 
 fn is_powershell(shell: &str) -> bool {
-    matches!(
-        shell.to_lowercase().as_str(),
-        "powershell" | "powershell.exe" | "pwsh" | "pwsh.exe"
-    )
+    let file = shell
+        .rsplit(|c| c == '/' || c == '\\')
+        .next()
+        .unwrap_or(shell)
+        .trim()
+        .to_lowercase();
+    let stem = file.strip_suffix(".exe").unwrap_or(&file);
+    matches!(stem, "powershell" | "pwsh")
 }
+
+/// Hook iniettato in PowerShell via `-Command`: a ogni prompt riemette il
+/// titolo console come sequenza `OSC 0` (`ESC ] 0 ; titolo BEL`).
+///
+/// Su Windows serve perche' ConPTY non inoltra nello stream VT i titoli
+/// impostati via API Win32 (`$Host.UI.RawUI.WindowTitle = ...`, che e' come
+/// gli agenti impostano il titolo): senza questo hook il tab non si aggiorna
+/// mai. Se il titolo e' ancora quello di default, usa la cartella corrente.
+/// Il `prompt` preesistente (profilo utente, oh-my-posh, ...) e' preservato.
+const POWERSHELL_TITLE_HOOK: &str = r#"$__mcInitTitle = ''; try { $__mcInitTitle = $Host.UI.RawUI.WindowTitle } catch { }; $__mcPrevPrompt = $null; try { $__mcPrevPrompt = (Get-Command prompt -CommandType Function -ErrorAction Stop).ScriptBlock } catch { }; function global:prompt { $__mcTitle = ''; try { $__mcTitle = $Host.UI.RawUI.WindowTitle; if ([string]::IsNullOrWhiteSpace($__mcTitle) -or $__mcTitle -eq $__mcInitTitle) { $__mcTitle = Split-Path -Leaf -Path (Get-Location).Path }; if ([string]::IsNullOrWhiteSpace($__mcTitle)) { $__mcTitle = 'PS' } } catch { $__mcTitle = 'PS' }; $__mcText = ''; try { if ($__mcPrevPrompt) { $__mcText = (@(& $__mcPrevPrompt) -join '') } else { $__mcText = "PS $($executionContext.SessionState.Path.CurrentLocation)$('>' * ($nestedPromptLevel + 1)) " } } catch { $__mcText = 'PS> ' }; "$([char]27)]0;$__mcTitle`a$__mcText" }"#;
 
 #[tauri::command]
 pub fn pty_spawn(
@@ -163,7 +260,7 @@ pub fn pty_spawn(
             c.arg("-e");
             c.arg(&shell);
         }
-        c.env("TERM", "xterm-256color");
+        apply_color_env(&mut c);
         c
     } else {
         let meta =
@@ -179,8 +276,12 @@ pub fn pty_spawn(
         let mut c = CommandBuilder::new(&shell);
         if is_powershell(&shell) {
             c.arg("-NoLogo");
+            c.arg("-NoExit");
+            c.arg("-Command");
+            c.arg(POWERSHELL_TITLE_HOOK);
         }
         c.cwd(&ws.path);
+        apply_color_env(&mut c);
         c
     };
 

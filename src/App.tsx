@@ -11,6 +11,7 @@ import { cn } from "./lib/utils";
 interface Tab {
   key: string;
   workspace: Workspace;
+  title?: string;
 }
 
 function newTabKey(): string {
@@ -28,6 +29,7 @@ export default function App() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeKey, setActiveKey] = useState<string | null>(null);
+  const [busyByKey, setBusyByKey] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     api
@@ -57,6 +59,20 @@ export default function App() {
 
   const closeTab = useCallback((key: string) => {
     setTabs((prev) => prev.filter((t) => t.key !== key));
+    setBusyByKey((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }, []);
+
+  const handleTitle = useCallback((key: string, title: string) => {
+    setTabs((prev) => prev.map((t) => (t.key === key ? { ...t, title } : t)));
+  }, []);
+
+  const handleStatus = useCallback((key: string, busy: boolean) => {
+    setBusyByKey((prev) => (prev[key] === busy ? prev : { ...prev, [key]: busy }));
   }, []);
 
   const handleAdded = useCallback((ws: Workspace) => {
@@ -111,10 +127,15 @@ export default function App() {
           )}
           {tabs.map((t) => {
             const isActive = t.key === activeKey;
+            const label = t.title ?? t.workspace.name;
+            const busy = busyByKey[t.key] === true;
+            const statusLabel = busy ? "In esecuzione" : "Inattivo";
             return (
               <div
                 key={t.key}
                 onClick={() => setActiveKey(t.key)}
+                title={label}
+                aria-label={label}
                 className={cn(
                   "flex cursor-pointer select-none items-center gap-2 rounded-md border px-2.5 py-1.5",
                   isActive
@@ -123,12 +144,21 @@ export default function App() {
                 )}
               >
                 <span
+                  role="img"
+                  aria-label={statusLabel}
+                  title={statusLabel}
+                  className={cn(
+                    "h-2 w-2 flex-shrink-0 rounded-full",
+                    busy ? "bg-yellow-500" : "bg-green-500",
+                  )}
+                />
+                <span
                   className={cn(
                     "whitespace-nowrap text-xs",
                     isActive ? "text-foreground" : "text-muted-foreground",
                   )}
                 >
-                  {t.workspace.name}
+                  {label}
                 </span>
                 <button
                   onClick={(e) => {
@@ -136,7 +166,7 @@ export default function App() {
                     closeTab(t.key);
                   }}
                   className="rounded p-0.5 text-muted-foreground hover:bg-background hover:text-foreground"
-                  aria-label={`Chiudi ${t.workspace.name}`}
+                  aria-label={`Chiudi ${label}`}
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
@@ -159,6 +189,8 @@ export default function App() {
               workspace={t.workspace}
               active={t.key === activeKey}
               onExit={() => closeTab(t.key)}
+              onTitle={(title) => handleTitle(t.key, title)}
+              onStatus={(busy) => handleStatus(t.key, busy)}
             />
           ))}
         </div>

@@ -134,3 +134,12 @@ body {
 .terminal-pane .xterm {
   height: 100%;
 }
+
+/* La scrollbar visibile è lo slider custom di xterm (sottile, a scomparsa):
+   i pulsanti ▲▼ nativi del motore di rendering sono solo rumore. Nasconderli
+   non tocca le meccaniche di scroll (track + slider restano invariati). */
+.terminal-pane ::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
