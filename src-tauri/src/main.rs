@@ -1,0 +1,57 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+fn print_help() {
+    println!(
+        "muse-companion {}\n\
+         \n\
+         Uso:\n  \
+           muse-companion                 Avvia l'interfaccia grafica\n  \
+           muse-companion --check-update  Controlla le release su GitHub ed esce\n  \
+           muse-companion --check-update --json  Come sopra, output JSON\n  \
+           muse-companion --version       Stampa la versione ed esce\n  \
+           muse-companion --help          Questo aiuto\n\
+         \n\
+         Exit code di --check-update: 0 = aggiornato, 2 = aggiornamento disponibile,\n  \
+         1 = errore (repo non configurato, rete, ...).\n\
+         \n\
+         Nota Windows: le build release non hanno console (windows_subsystem), quindi\n  \
+         questi flag sono pensati per le build debug (cargo run -- --check-update)\n  \
+         o per script; nella GUI usa il pannello \"Controlla aggiornamenti\".",
+        muse_companion_lib::updater::current_version()
+    );
+}
+
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        print_help();
+        return;
+    }
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("muse-companion {}", muse_companion_lib::updater::current_version());
+        return;
+    }
+    if args.iter().any(|a| a == "--check-update") {
+        let as_json = args.iter().any(|a| a == "--json");
+        match muse_companion_lib::updater::check_blocking() {
+            Ok(st) => {
+                if as_json {
+                    println!("{}", serde_json::to_string_pretty(&st).unwrap_or_default());
+                } else if st.update_available {
+                    println!(
+                        "Aggiornamento disponibile: {} -> {} ({})",
+                        st.current_version, st.latest_version, st.release_url
+                    );
+                } else {
+                    println!("muse-companion aggiornato ({}).", st.current_version);
+                }
+                std::process::exit(if st.update_available { 2 } else { 0 });
+            }
+            Err(e) => {
+                eprintln!("Controllo aggiornamenti fallito: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+    muse_companion_lib::run();
+}

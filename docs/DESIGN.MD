@@ -1,0 +1,124 @@
+# muse-companion — Design
+
+App desktop (Windows) per gestire cartelle di lavoro ("workspace") locali e WSL2
+e aprirci dentro terminali integrati a tab.
+
+## Stack
+
+- **Tauri v2** + **Rust** (backend), **React 18 + TypeScript + Vite** (frontend)
+- UI: **shadcn/ui** (componenti in `src/components/ui/`, stile new-york) +
+  **Tailwind CSS v4** (tema dark in `src/index.css`, alias `@/` -> `src/`).
+  Nota storica: la prima versione usava gluestack-ui v1 + react-native-web,
+  rimossi perché incompatibili con il dev server Vite 8 (sorgenti .jsx/.tsx
+  grezzi non pre-bundlati -> schermata bianca). Vedi `tests/no-gluestack.test.mjs`.
+- Terminali: **xterm.js** (`@xterm/xterm` + `@xterm/addon-fit`) nel frontend,
+  **portable-pty** (ConPTY su Windows) nel backend
+- Persistenza: **JSON** (`workspaces.json` nella app-data dir di Tauri)
+
+## Architettura
+
+```text
++------------------+  invoke (comandi)   +------------------+
+|  React (WebView) | ------------------> |  Rust (Tauri)    |
+|  - Sidebar       | <-- eventi ---------|  - workspaces.rs |
+|  - Tab terminali |  pty-output/pTy-exit |  - wsl.rs        |
+|  - xterm.js      |                      |  - pty.rs        |
++------------------+                      +---------+--------+
+                                                    |
+                                    +---------------+---------------+
+                                    |                               |
+                              ConPTY: powershell/cmd          wsl.exe -d <distro>
+                              cwd = cartella                  --cd <linux-path>
+```
+
+Frontend e backend comunicano solo via comandi Tauri (`invoke`) per le azioni
+ed eventi Tauri (`emit`/`listen`) per lo stream di output dei terminali.
+
+## Backend (`src-tauri/src/`)
+
+### `workspaces.rs` — store JSON + CRUD
+
+- `Workspace { id, name, kind, path, distro?, shell?, created_at }`
+  - `kind`: `"windows"` o `"wsl"`
+  - `path`: percorso Windows (`C:\...`) oppure percorso Linux assoluto (`/...`)
+  - `distro`: solo per WSL; `shell`: override opzionale
+- Stato condiviso `WorkspaceStore` (in memoria + salvataggio su ogni modifica).
+- File: `<app_data>/workspaces.json`. Se corrotto, backup in `.json.bak` e riparto vuoto.
+- Comandi: `list_workspaces`, `add_workspace`, `rename_workspace`, `remove_workspace`.
+- `add_workspace` valida tutto prima di salvare:
+  - Windows: il path deve esistere ed essere una cartella;
+  - WSL: distro non vuota, path assoluto (accetta anche `C:\...` o `\\wsl$\...`
+    convertendoli), cartella esistente nella distro (via `wsl test -d`);
+  - niente duplicati a parità di `kind + path + distro`;
+  - nome vuoto -> usa l'ultimo segmento del percorso.
+
+### `wsl.rs` — interop WSL2
+
+- `installed_distros()`: esegue `wsl.exe -l -q` e parsifica l'output.
+  Nota: `wsl.exe` scrive in **UTF-16LE con BOM**, quindi la decodifica gestisce
+  UTF-16LE/BE e UTF-8, con filtro difensivo su righe spurie.
+- `wsl_dir_exists(distro, path)`: `wsl.exe -d <distro> -- test -d <path>`.
+- `windows_to_wsl_path()`: `C:\a\b` -> `/mnt/c/a/b`,
+  `\\wsl$\Distro\home\u` -> `/home/u`.
+- Le chiamate a `wsl.exe` usano `CREATE_NO_WINDOW` (niente flash di console).
+- Comandi esposti: `list_wsl_distros`, `check_wsl_path` (per la verifica live nel form).
+
+### `pty.rs` — sessioni terminale
+
+- Ogni tab del frontend corrisponde a una sessione PTY numerata (`u32`),
+  tenuta in `PtyState { sessions: Arc<Mutex<HashMap<...>>>, next_id }`
+  (limite: 32 sessioni).
+- `pty_spawn(workspace_id, cols, rows)`:
+  - Windows: `powershell.exe -NoLogo` (o shell custom) con cwd = cartella;
+  - WSL: `wsl.exe -d <distro> --cd <path> [-e <shell>]`, `TERM=xterm-256color`;
+  - ricontrolla che la cartella esista al momento dello spawn.
+- Un thread di lettura per sessione inoltra i chunk al frontend con l'evento
+  `pty-output { session_id, data }`; alla chiusura emette `pty-exit { session_id }`.
+- Decodifica UTF-8 **incrementale**: i chunk possono spezzare un carattere
+  multibyte, quindi i byte incompleti restano in coda fino al chunk dopo
+  (niente `�` su accenti/box-drawing).
+- Comandi: `pty_spawn`, `pty_write`, `pty_resize`, `pty_close`.
+  `pty_close` uccide il processo figlio; il thread di lettura emette comunque
+  `pty-exit`, così frontend e backend non divergono.
+
+### `lib.rs`
+
+Registra i plugin (`opener`, `dialog`), gli stati condivisi, il caricamento
+dello store in `setup` e tutti i comandi. Capability minime in
+`capabilities/default.json` (`core:default`, `opener:default`, `dialog:allow-open`).
+
+## Frontend (`src/`)
+
+- `lib/tauri.ts`: tipi (`Workspace`, eventi PTY) e wrapper `api` sopra `invoke`/`listen`.
+- `App.tsx`: layout sidebar + area tab; stato globale minimale
+  (`workspaces`, `tabs`, `activeKey`, dialog). Quando il tab attivo viene chiuso,
+  seleziona l'ultimo rimasto.
+- `components/Sidebar.tsx`: lista workspace con badge `WIN`/`distro`, azioni
+  "+ Terminale", rinomina inline, elimina con doppia conferma (niente
+  `confirm()` nativo, per robustezza nella WebView).
+- `components/AddWorkspaceDialog.tsx`: modal gluestack con toggle Windows/WSL.
+  Windows: picker cartella nativo (`@tauri-apps/plugin-dialog`) o path manuale.
+  WSL: lista distro con caricamento async, input percorso con bottone "Verifica".
+- `components/TerminalView.tsx`: un'istanza xterm per tab.
+  - Lo spawn avviene al mount; i tab inattivi restano montati ma nascosti
+    (`display: none`) per non perdere lo stato della shell.
+  - `ResizeObserver` + evento "torna attivo" tengono sincronizzate dimensioni
+    xterm e PTY (`fit()` + `pty_resize`).
+  - Cleanup completo all'unmount (unlisten, `pty_close`, `dispose`), robusto
+    anche al double-mount di `StrictMode` in dev.
+
+## Scelte e limiti noti
+
+- Solo Windows + WSL per ora: il codice WSL/PTY è Windows-first
+  (`wsl.exe`, ConPTY via portable-pty).
+- JSON invece di SQLite: adeguato per poche centinaia di workspace; lo store
+  è isolato in `workspaces.rs`, migrabile in futuro.
+- Nessuna autenticazione/cifratura: i path sono dati locali non sensibili.
+- Bundle JS ~1 MB (gluestack + RN-web): accettabile per app desktop,
+  valutabile code-splitting se cresce.
+
+## Comandi utili
+
+- `npm run tauri dev` — avvio app in sviluppo
+- `npm run build` — typecheck + build frontend
+- `cargo check` (in `src-tauri/`) — typecheck backend

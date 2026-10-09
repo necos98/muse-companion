@@ -1,0 +1,99 @@
+name: build-windows
+
+# Build reale del progetto (frontend: npm/tsc/vite, backend: Tauri v2/Rust):
+# - su ogni push/PR produce l'eseguibile + i bundle Windows come artifact CI;
+# - su tag v* crea anche la GitHub Release con installer + checksum .sha256,
+#   che e' esattamente cio' che consuma l'updater (vedi docs/UPDATER.MD).
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write # serve per creare la Release su tag v*
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Setup Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install WiX Toolset (per bundle MSI)
+        # NSIS viene scaricato automaticamente da tauri-bundler;
+        # WiX invece deve essere nel PATH (candle.exe/light.exe).
+        # Se il runner lo ha gia', choco esce subito con successo.
+        run: choco install wixtoolset --version=3.14.1 -y --no-progress
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Test (node)
+        run: npm test
+
+      - name: Build Tauri app + bundle Windows
+        # Esegue beforeBuildCommand (npm run build = tsc && vite build)
+        # poi compila il backend Rust in release e crea i bundle
+        # (targets=all -> su Windows: MSI via WiX + NSIS setup.exe).
+        # --ci evita prompt interattivi.
+        run: npx tauri build --ci
+
+      - name: Generate SHA256 checksums
+        # L'updater verifica '<asset>.sha256' (singolo hash, vedi docs/UPDATER.MD).
+        run: |
+          $files = @(
+            "src-tauri/target/release/muse-companion.exe",
+            "src-tauri/target/release/bundle/msi/*.msi",
+            "src-tauri/target/release/bundle/nsis/*-setup.exe"
+          ) | ForEach-Object { Get-Item $_ -ErrorAction SilentlyContinue } | Where-Object { $_ -is [System.IO.FileInfo] }
+          if (-not $files) { throw "Nessun eseguibile/bundle trovato: build fallita?" }
+          $files | ForEach-Object { Write-Host "asset: $($_.FullName) ($($_.Length) bytes)" }
+          foreach ($f in $files) {
+            $hash = (Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLower()
+            Set-Content -Path ($f.FullName + ".sha256") -Value $hash -NoNewline
+            Write-Host "checksum: $($f.Name).sha256 = $hash"
+          }
+
+      - name: Upload artifacts (CI)
+        uses: actions/upload-artifact@v4
+        with:
+          name: muse-companion-windows
+          path: |
+            src-tauri/target/release/muse-companion.exe
+            src-tauri/target/release/muse-companion.exe.sha256
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/msi/*.sha256
+            src-tauri/target/release/bundle/nsis/*-setup.exe
+            src-tauri/target/release/bundle/nsis/*.sha256
+          if-no-files-found: error
+
+      - name: Create GitHub Release (solo su tag v*)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $assets = @(
+            "src-tauri/target/release/bundle/msi/*.msi",
+            "src-tauri/target/release/bundle/msi/*.sha256",
+            "src-tauri/target/release/bundle/nsis/*-setup.exe",
+            "src-tauri/target/release/bundle/nsis/*.sha256",
+            "src-tauri/target/release/muse-companion.exe",
+            "src-tauri/target/release/muse-companion.exe.sha256"
+          ) | ForEach-Object { Get-Item $_ -ErrorAction SilentlyContinue } | Where-Object { $_ -is [System.IO.FileInfo] } | Select-Object -ExpandProperty FullName
+          if (-not $assets) { throw "Nessun asset da pubblicare" }
+          gh release create "$tag" $assets --title "$tag" --generate-notes
