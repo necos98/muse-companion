@@ -36,8 +36,16 @@ jobs:
       - name: Install WiX Toolset (per bundle MSI)
         # NSIS viene scaricato automaticamente da tauri-bundler;
         # WiX invece deve essere nel PATH (candle.exe/light.exe).
-        # Se il runner lo ha gia', choco esce subito con successo.
-        run: choco install wixtoolset --version=3.14.1 -y --no-progress
+        # I runner windows-latest spesso lo hanno gia' preinstallato
+        # (versione >= quella pinnata): in quel caso si salta l'install
+        # perche' choco fallirebbe chiedendo un downgrade.
+        run: |
+          $wix = Get-Command candle.exe, light.exe -ErrorAction SilentlyContinue
+          if ($wix) {
+            Write-Host "WiX gia' presente: $($wix[0].Source), salto installazione."
+          } else {
+            choco install wixtoolset -y --no-progress
+          }
 
       - name: Install frontend deps
         run: npm ci
