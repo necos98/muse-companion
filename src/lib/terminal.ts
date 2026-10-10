@@ -15,6 +15,31 @@ export function sanitizeTerminalTitle(raw: string): string | null {
   return collapsed.slice(0, TERMINAL_TITLE_MAX);
 }
 
+/** Azione appunti decisa per un tasto premuto nel terminale. */
+export type ClipboardKeyAction = "copy" | "paste" | null;
+
+/**
+ * Decide se un tasto premuto nel terminale è un'azione appunti:
+ * Ctrl+C con selezione, Ctrl+Shift+C o Ctrl+Ins = copia;
+ * Ctrl+V, Ctrl+Shift+V o Shift+Ins = incolla; tutto il resto = null.
+ * Ctrl+C senza selezione resta null così arriva alla shell come SIGINT.
+ */
+export function clipboardKeyAction(
+  e: Pick<KeyboardEvent, "key" | "ctrlKey" | "shiftKey">,
+  hasSelection: boolean,
+): ClipboardKeyAction {
+  if (e.key === "Insert") {
+    if (e.ctrlKey && !e.shiftKey) return "copy";
+    if (e.shiftKey && !e.ctrlKey) return "paste";
+    return null;
+  }
+  if (!e.ctrlKey) return null;
+  const key = e.key.toLowerCase();
+  if (key === "c" && (e.shiftKey || hasSelection)) return "copy";
+  if (key === "v") return "paste";
+  return null;
+}
+
 export interface BusyTracker {
   /** Segnala output arrivato dal pty: diventa busy. */
   markOutput: () => void;

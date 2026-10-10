@@ -2,9 +2,14 @@ import { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
+import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { api, onPtyExit, onPtyOutput } from "../lib/tauri";
 import type { Workspace } from "../lib/tauri";
-import { createBusyTracker, sanitizeTerminalTitle } from "../lib/terminal";
+import {
+  clipboardKeyAction,
+  createBusyTracker,
+  sanitizeTerminalTitle,
+} from "../lib/terminal";
 import { TERMINAL_THEME } from "../lib/terminalTheme";
 import {
   DEFAULT_COMMAND_AFTER_OUTPUT_MS,
@@ -102,6 +107,29 @@ export default function TerminalView({
       const s = sessionRef.current;
       if (s !== 0) void api.ptyWrite(s, data).catch(() => undefined);
       if (data.includes("\r") || data.includes("\n")) status.markEnter();
+    });
+
+    // Copia/incolla da tastiera: xterm non li gestisce da solo (senza
+    // questo handler Ctrl+C arriva alla shell come SIGINT anche con testo
+    // selezionato e Ctrl+V non legge gli appunti). Ritornare false blocca
+    // l'invio del tasto al PTY; term.paste() riusa onData qui sopra.
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== "keydown") return true;
+      const action = clipboardKeyAction(e, term.hasSelection());
+      if (action === "copy") {
+        const sel = term.getSelection();
+        if (sel !== "") void writeText(sel).catch(() => undefined);
+        return false;
+      }
+      if (action === "paste") {
+        void readText()
+          .then((text) => {
+            if (text !== "") term.paste(text);
+          })
+          .catch(() => undefined);
+        return false;
+      }
+      return true;
     });
 
     const initialCols = term.cols;
